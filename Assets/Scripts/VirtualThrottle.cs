@@ -1,20 +1,27 @@
 ﻿using System;
 using UnityEngine;
+using Valve.VR;
 
 namespace EVRC
 {
     /**
      * A virtual 1-axis movable throttle that outputs to vJoy when grabbed
      */
+    using Events = SteamVR_Events;
+
     public class VirtualThrottle : MonoBehaviour, IGrabable, IHighlightable
     {
 
-        public Color color;
+        public Color forwardColor;
         public Color highlightColor;
+        public Color reverseColor;
+        public Color deadzoneColor;
         [Range(0f, 1f)]
         public float magnitudeLength = 1f;
         [Range(0f, 100f)]
         public float deadzonePercentage = 0f;
+        public bool useColorChange = true; 
+        public bool useHapticDetent = true; 
         public Transform handle;
         public HolographicRect line;
         public VirtualThrottleButtons buttons;
@@ -28,10 +35,43 @@ namespace EVRC
             return GrabMode.VirtualControl;
         }
 
+        public class Throttle{
+            private float _power;
+
+            // -1 = reverse, +1 = forward
+            public int Direction { get; set; }
+
+            // Percent throttle (power)
+            public float Power
+            {
+                get { return _power; }
+                set {
+                    _power = value;
+
+                    if (_power == 0) {
+                        Direction = 0;
+                        this?.OnDirectionChanged(this, Direction);
+                    }
+                    else if (Math.Sign(_power) != Direction)
+                    {
+                        Direction = Math.Sign(_power);
+                        this?.OnDirectionChanged(this, Direction);
+                    }
+                    
+                }
+            } 
+           
+            public void OnDirectionChanged(Throttle t, int n) {
+                SteamVR_Actions.default_Haptic[SteamVR_Input_Sources.LeftHand].Execute(0, 0.1f, 250, 0.8f);
+                Debug.LogFormat("-----------------dir change: {0} -----------------", n);
+            }
+        }
+
+        public Throttle throttle = new Throttle();      
+
         void Start()
         {
-            controller = CockpitStateController.instance;
-
+            controller = CockpitStateController.instance; 
             Refresh();
         }
 
@@ -119,13 +159,14 @@ namespace EVRC
             if (line)
             {
                 line.width = magnitudeLength * 2;
+                line.pxWidth = 10;
                 if (highlighted)
                 {
                     line.color = highlightColor;
                 }
                 else
                 {
-                    line.color = color;
+                    line.color = forwardColor;
                 }
             }
 
@@ -141,34 +182,58 @@ namespace EVRC
             if (attachedInteractionPoint == null) return;
 
             var p = transform.InverseTransformPoint(attachPoint.position);
-            float throttle = Mathf.Clamp(p.z, -magnitudeLength, magnitudeLength) / magnitudeLength;
-            SetValue(throttle);
+            throttle.Power = Mathf.Clamp(p.z, -magnitudeLength, magnitudeLength) / magnitudeLength;
+            SetValue(throttle.Power);
         }
 
         /**
          * Update handle position without updating throttle
          */
-        public void SetHandle(float throttle)
+        public void SetHandle(float power)
         {
             if (handle)
             {
-                handle.localPosition = new Vector3(0, 0, throttle * magnitudeLength);
+                handle.localPosition = new Vector3(0, 0, power * magnitudeLength);
             }
         }
 
         /**
          * Set the throttle magnitude
          */
-        public void SetValue(float throttle)
+        public void SetValue(float power)
         {
             // Apply deadzone
-            throttle = Mathf.Abs(throttle) < (deadzonePercentage / 100f) ? 0f : throttle;
+            power = Mathf.Abs(power) < (deadzonePercentage / 100f) ? 0f : power;
+
+            if (useColorChange){HandleThrottleColors(power);}
 
             // Update handle position
-            SetHandle(throttle);
+            SetHandle(power);
 
-            // Change vJoy throttle
-            vJoyInterface.instance.SetThrottle(throttle);
+            // Change vJoy 
+            vJoyInterface.instance.SetThrottle(power);
         }
+
+
+        public void HandleThrottleColors(float power)
+        {
+            // Set color to indicate deadzone
+            if (power == 0) 
+            {
+                line.color = deadzoneColor;
+            }
+            // Set color for forward thrust
+            if (throttle.Direction == 1) 
+            {
+                line.color = forwardColor;
+            } 
+
+            // Set color for reverse thrust
+            else if (throttle.Direction == -1) 
+            {
+                line.color = reverseColor;
+            }
+        }
+
     }
 }
